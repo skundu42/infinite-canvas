@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 
 import server as app
@@ -33,7 +34,7 @@ class CanvasStateTests(unittest.TestCase):
         tools = asyncio.run(app.server.list_tools())
         self.assertEqual(
             [tool.name for tool in tools],
-            ["get_canvas", "add_node", "update_node", "connect_nodes"],
+            ["get_canvas", "add_node", "update_node", "connect_nodes", "export_canvas"],
         )
 
     def test_add_node_creates_canvas_and_places_cards(self) -> None:
@@ -87,6 +88,30 @@ class CanvasStateTests(unittest.TestCase):
             app.connect_nodes(source["canvas_id"], source["node"]["id"], source["node"]["id"])
         with self.assertRaisesRegex(KeyError, "Node .* was not found"):
             app.connect_nodes(source["canvas_id"], source["node"]["id"], "0" * 32)
+
+    def test_export_canvas_returns_editable_json(self) -> None:
+        created = app.add_node("Idea", body="Keep the objects editable")
+        exported = app.export_canvas(created["canvas_id"], "json")
+
+        self.assertEqual(exported["mime_type"], "application/json")
+        self.assertEqual(json.loads(exported["content"]), app.get_canvas(created["canvas_id"]))
+
+    def test_export_canvas_returns_escaped_standalone_svg(self) -> None:
+        source = app.add_node("<script>", body="A & B")
+        target = app.add_node("Target", canvas_id=source["canvas_id"])
+        app.connect_nodes(source["canvas_id"], source["node"]["id"], target["node"]["id"], "<next>")
+        exported = app.export_canvas(source["canvas_id"])
+
+        self.assertEqual(exported["mime_type"], "image/svg+xml")
+        self.assertIn("&lt;script&gt;", exported["content"])
+        self.assertIn("&lt;next&gt;", exported["content"])
+        self.assertNotIn("<script>", exported["content"])
+        self.assertIn("marker-end", exported["content"])
+
+    def test_export_canvas_rejects_unknown_format(self) -> None:
+        created = app.add_node("Card")
+        with self.assertRaisesRegex(ValueError, "Format must be"):
+            app.export_canvas(created["canvas_id"], "png")
 
 
 if __name__ == "__main__":

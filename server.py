@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import json
 from copy import deepcopy
+from html import escape
 from threading import Lock
-from typing import Annotated, Any
+from textwrap import wrap
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from mcp.types import ToolAnnotations
@@ -59,6 +62,10 @@ OptionalColor = Annotated[
     Field(pattern=r"^#[0-9A-Fa-f]{6}$", description="Replacement six-digit hexadecimal card color"),
 ]
 Label = Annotated[str, Field(max_length=80, description="Optional connection label")]
+ExportFormat = Annotated[
+    Literal["json", "svg"],
+    Field(description="Editable JSON or standalone SVG"),
+]
 
 # ponytail: process-local state and one lock suit this template; use durable storage
 # and per-canvas locks when persistence or multi-worker throughput matters.
@@ -240,6 +247,72 @@ def _connect_nodes(canvas_id: str, source_id: str, target_id: str, label: str = 
         return {"canvas_id": canvas_id, "connection": deepcopy(connection), "revision": canvas["revision"]}
 
 
+def _export_canvas(canvas_id: str, output_format: str = "svg") -> dict[str, str]:
+    canvas = _get_canvas(canvas_id)
+    if output_format == "json":
+        content = json.dumps(canvas, ensure_ascii=False, indent=2)
+        mime_type = "application/json"
+    elif output_format == "svg":
+        content = _canvas_to_svg(canvas)
+        mime_type = "image/svg+xml"
+    else:
+        raise ValueError("Format must be 'json' or 'svg'")
+    return {
+        "format": output_format,
+        "mime_type": mime_type,
+        "filename": f"nfinite-{canvas_id[:8]}.{output_format}",
+        "content": content,
+    }
+
+
+def _canvas_to_svg(canvas: Canvas) -> str:
+    node_width, node_height, margin = 240, 132, 80
+    nodes = canvas["nodes"]
+    if nodes:
+        min_x = min(node["x"] for node in nodes) - margin
+        min_y = min(node["y"] for node in nodes) - margin
+        max_x = max(node["x"] for node in nodes) + node_width + margin
+        max_y = max(node["y"] for node in nodes) + node_height + margin
+    else:
+        min_x, min_y, max_x, max_y = 0, 0, 800, 600
+    width, height = max_x - min_x, max_y - min_y
+    by_id = {node["id"]: node for node in nodes}
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{min_x:g} {min_y:g} {width:g} {height:g}" role="img" aria-label="nfinite Canvas export">',
+        "<defs>",
+        '<pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#B8C7D4"/></pattern>',
+        '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#F06449"/></marker>',
+        '<style>.edge{stroke:#F06449;stroke-width:2.5;fill:none}.label{font:12px ui-monospace,monospace;fill:#455565}.kind{font:700 10px ui-monospace,monospace;letter-spacing:1.2px;fill:#455565}.title{font:700 18px system-ui,sans-serif;fill:#14222E}.body{font:13px system-ui,sans-serif;fill:#334654}</style>',
+        "</defs>",
+        f'<rect x="{min_x:g}" y="{min_y:g}" width="{width:g}" height="{height:g}" fill="#EAF1F7"/>',
+        f'<rect x="{min_x:g}" y="{min_y:g}" width="{width:g}" height="{height:g}" fill="url(#grid)"/>',
+    ]
+    for connection in canvas["connections"]:
+        source, target = by_id[connection["source"]], by_id[connection["target"]]
+        x1, y1 = source["x"] + node_width / 2, source["y"] + node_height / 2
+        x2, y2 = target["x"] + node_width / 2, target["y"] + node_height / 2
+        parts.append(f'<path class="edge" d="M {x1:g} {y1:g} L {x2:g} {y2:g}" marker-end="url(#arrow)"/>')
+        if connection["label"]:
+            parts.append(
+                f'<text class="label" x="{(x1 + x2) / 2:g}" y="{(y1 + y2) / 2 - 8:g}" text-anchor="middle">{escape(connection["label"])}</text>'
+            )
+    for node in nodes:
+        x, y = node["x"], node["y"]
+        parts.extend(
+            [
+                f'<g transform="translate({x:g} {y:g})">',
+                f'<rect width="{node_width}" height="{node_height}" rx="12" fill="{node["color"]}" stroke="#7A8C9A"/>',
+                f'<text class="kind" x="18" y="25">{escape(node["kind"].upper())}</text>',
+                f'<text class="title" x="18" y="52">{escape(node["title"])}</text>',
+            ]
+        )
+        for index, line in enumerate(wrap(node["body"], width=34)[:3]):
+            parts.append(f'<text class="body" x="18" y="{78 + index * 18}">{escape(line)}</text>')
+        parts.append("</g>")
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 server = MCPServer(
     name="nfinite-canvas",
     version="0.1.0",
@@ -308,6 +381,16 @@ def connect_nodes(
 ) -> dict[str, Any]:
     """Connect two cards, returning an existing exact duplicate unchanged."""
     return _connect_nodes(canvas_id, source_id, target_id, label)
+
+
+@server.tool(
+    description="Export a canvas as editable JSON or a standalone SVG that preserves card positions.",
+    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    structured_output=True,
+)
+def export_canvas(canvas_id: CanvasId, format: ExportFormat = "svg") -> dict[str, str]:
+    """Return a portable representation of the canvas."""
+    return _export_canvas(canvas_id, format)
 
 
 if __name__ == "__main__":
