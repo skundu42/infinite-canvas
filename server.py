@@ -47,6 +47,17 @@ Coordinate = Annotated[
     float | None,
     Field(ge=-100_000, le=100_000, description="Canvas coordinate; omit for automatic placement"),
 ]
+NodeId = Annotated[
+    str,
+    Field(min_length=32, max_length=32, pattern=ID_PATTERN, description="Card identifier returned by add_node"),
+]
+OptionalTitle = Annotated[str | None, Field(max_length=120, description="Replacement card title")]
+OptionalBody = Annotated[str | None, Field(max_length=4_000, description="Replacement card details")]
+OptionalKind = Annotated[str | None, Field(max_length=32, description="Replacement card category")]
+OptionalColor = Annotated[
+    str | None,
+    Field(pattern=r"^#[0-9A-Fa-f]{6}$", description="Replacement six-digit hexadecimal card color"),
+]
 
 # ponytail: process-local state and one lock suit this template; use durable storage
 # and per-canvas locks when persistence or multi-worker throughput matters.
@@ -141,6 +152,57 @@ def _add_node(
         return {"canvas_id": canvas_id, "node": deepcopy(node), "revision": canvas["revision"]}
 
 
+def _update_node(
+    canvas_id: str,
+    node_id: str,
+    title: str | None = None,
+    body: str | None = None,
+    kind: str | None = None,
+    color: str | None = None,
+    x: float | None = None,
+    y: float | None = None,
+) -> dict[str, Any]:
+    _validate_id(canvas_id, "canvas")
+    _validate_id(node_id, "node")
+    changes = {
+        key: value
+        for key, value in {
+            "title": title,
+            "body": body,
+            "kind": kind,
+            "color": color,
+            "x": x,
+            "y": y,
+        }.items()
+        if value is not None
+    }
+    if not changes:
+        raise ValueError("At least one node field must be provided")
+    if "title" in changes:
+        changes["title"] = _validate_text(changes["title"], "Title", 120, required=True)
+    if "body" in changes:
+        changes["body"] = _validate_text(changes["body"], "Body", 4_000)
+    if "kind" in changes:
+        changes["kind"] = _validate_text(changes["kind"], "Kind", 32, required=True)
+    if "color" in changes:
+        changes["color"] = _validate_color(changes["color"])
+    if "x" in changes:
+        changes["x"] = _validate_coordinate(changes["x"])
+    if "y" in changes:
+        changes["y"] = _validate_coordinate(changes["y"])
+
+    with _store_lock:
+        canvas = _canvases.get(canvas_id)
+        if canvas is None:
+            raise KeyError(f"Canvas '{canvas_id}' was not found")
+        node = next((candidate for candidate in canvas["nodes"] if candidate["id"] == node_id), None)
+        if node is None:
+            raise KeyError(f"Node '{node_id}' was not found")
+        node.update(changes)
+        canvas["revision"] += 1
+        return {"canvas_id": canvas_id, "node": deepcopy(node), "revision": canvas["revision"]}
+
+
 server = MCPServer(
     name="nfinite-canvas",
     version="0.1.0",
@@ -175,6 +237,25 @@ def add_node(
 ) -> dict[str, Any]:
     """Add a card and return its canvas and node identifiers."""
     return _add_node(title, body, kind, color, x, y, canvas_id)
+
+
+@server.tool(
+    description="Change selected fields or the position of an existing card.",
+    annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=True, openWorldHint=False),
+    structured_output=True,
+)
+def update_node(
+    canvas_id: CanvasId,
+    node_id: NodeId,
+    title: OptionalTitle = None,
+    body: OptionalBody = None,
+    kind: OptionalKind = None,
+    color: OptionalColor = None,
+    x: Coordinate = None,
+    y: Coordinate = None,
+) -> dict[str, Any]:
+    """Patch a card without replacing omitted fields."""
+    return _update_node(canvas_id, node_id, title, body, kind, color, x, y)
 
 
 if __name__ == "__main__":

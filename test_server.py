@@ -31,7 +31,7 @@ class CanvasStateTests(unittest.TestCase):
 
     def test_get_canvas_is_advertised(self) -> None:
         tools = asyncio.run(app.server.list_tools())
-        self.assertEqual([tool.name for tool in tools], ["get_canvas", "add_node"])
+        self.assertEqual([tool.name for tool in tools], ["get_canvas", "add_node", "update_node"])
 
     def test_add_node_creates_canvas_and_places_cards(self) -> None:
         first = app.add_node("Research")
@@ -48,6 +48,23 @@ class CanvasStateTests(unittest.TestCase):
             app.add_node("   ")
         with self.assertRaisesRegex(ValueError, "hexadecimal"):
             app.add_node("Card", color="red")
+
+    def test_update_node_only_changes_provided_fields(self) -> None:
+        created = app.add_node("Draft", body="Keep me", color="#aabbcc")
+        updated = app.update_node(created["canvas_id"], created["node"]["id"], title="Final", x=42)
+
+        self.assertEqual(updated["node"]["title"], "Final")
+        self.assertEqual(updated["node"]["body"], "Keep me")
+        self.assertEqual(updated["node"]["color"], "#AABBCC")
+        self.assertEqual(updated["node"]["x"], 42)
+        self.assertEqual(updated["revision"], 2)
+
+    def test_update_node_rejects_empty_patch_and_missing_node(self) -> None:
+        created = app.add_node("Draft")
+        with self.assertRaisesRegex(ValueError, "At least one"):
+            app.update_node(created["canvas_id"], created["node"]["id"])
+        with self.assertRaisesRegex(KeyError, "Node .* was not found"):
+            app.update_node(created["canvas_id"], "0" * 32, title="Missing")
 
 
 if __name__ == "__main__":
