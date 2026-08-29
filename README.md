@@ -59,7 +59,7 @@ pip install -r requirements.txt
 python server.py
 ```
 
-Open the canvas at <http://localhost:8000> or connect an MCP client to <http://localhost:8000/mcp>.
+Open the canvas at <http://localhost:8000>. Visit <http://localhost:8000/mcp> in a browser for the connection guide, or use that same URL in an MCP client.
 
 Run the test suite:
 

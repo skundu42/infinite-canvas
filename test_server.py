@@ -116,10 +116,18 @@ class CanvasStateTests(unittest.TestCase):
 
 
 class CanvasApiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.client = TestClient(app.application)
+        cls.client.__enter__()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.client.__exit__(None, None, None)
+
     def setUp(self) -> None:
         with app._store_lock:
             app._canvases.clear()
-        self.client = TestClient(app.server.streamable_http_app())
 
     def test_rest_canvas_lifecycle(self) -> None:
         created = self.client.post("/api/canvases")
@@ -154,6 +162,20 @@ class CanvasApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Infinite Canvas", response.text)
         self.assertIn("id=\"viewport\"", response.text)
+
+    def test_mcp_demo_is_served_to_browsers(self) -> None:
+        response = self.client.get("/mcp", headers={"Accept": "text/html"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Infinite Canvas MCP Server", response.text)
+        self.assertIn("Installation guide", response.text)
+        self.assertIn("Tools <span aria-label=\"five tools\">(5)</span>", response.text)
+
+    def test_mcp_protocol_requests_bypass_demo(self) -> None:
+        response = self.client.get("/mcp", headers={"Accept": "application/json"})
+
+        self.assertNotEqual(response.status_code, 200)
+        self.assertNotIn("Infinite Canvas MCP Server", response.text)
 
     def test_rest_errors_are_structured(self) -> None:
         missing = self.client.get(f"/api/canvases/{'0' * 32}")

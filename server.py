@@ -411,6 +411,7 @@ def export_canvas(canvas_id: CanvasId, format: ExportFormat = "svg") -> dict[str
 
 Handler = Callable[[Request], Awaitable[Response]]
 INDEX_PATH = Path(__file__).with_name("public") / "index.html"
+DEMO_PATH = Path(__file__).with_name("public") / "demo.html"
 
 
 def _api_route(path: str, methods: list[str]) -> Callable[[Handler], Handler]:
@@ -489,10 +490,36 @@ async def api_export_canvas(request: Request) -> Response:
     )
 
 
+class BrowserDemoPage:
+    """Serve a human landing page without intercepting MCP protocol requests."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        headers = dict(scope.get("headers", []))
+        accepts_html = b"text/html" in headers.get(b"accept", b"")
+        is_browser_get = scope.get("method") in {"GET", "HEAD"} and accepts_html
+        if scope.get("type") == "http" and scope.get("path") == "/mcp" and is_browser_get:
+            await FileResponse(DEMO_PATH)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+application = BrowserDemoPage(server.streamable_http_app())
+
+
+class CanvasServerRunner(ServerRunner):
+    async def run_streamable_http_async(
+        self, host: str = "127.0.0.1", port: int = 8000, reload: bool = False
+    ) -> None:
+        await self.serve_starlette_app(application, host, port, "streamable-http", reload)
+
+
 if __name__ == "__main__":
     # ponytail: MCPServer.run() in 1.7.0 wraps the SDK's internal tool-cache lookup;
     # use its ASGI runner directly until that middleware bug is fixed upstream.
-    ServerRunner(server).run(
+    CanvasServerRunner(server).run(
         transport="streamable-http",
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
