@@ -1,4 +1,4 @@
-"""nfinite Canvas MCP server."""
+"""Infinite Canvas MCP server."""
 
 from __future__ import annotations
 
@@ -276,7 +276,7 @@ def _export_canvas(canvas_id: str, output_format: str = "svg") -> dict[str, str]
     return {
         "format": output_format,
         "mime_type": mime_type,
-        "filename": f"nfinite-{canvas_id[:8]}.{output_format}",
+        "filename": f"infinite-canvas-{canvas_id[:8]}.{output_format}",
         "content": content,
     }
 
@@ -294,7 +294,7 @@ def _canvas_to_svg(canvas: Canvas) -> str:
     width, height = max_x - min_x, max_y - min_y
     by_id = {node["id"]: node for node in nodes}
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{min_x:g} {min_y:g} {width:g} {height:g}" role="img" aria-label="nfinite Canvas export">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{min_x:g} {min_y:g} {width:g} {height:g}" role="img" aria-label="Infinite Canvas export">',
         "<defs>",
         '<pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#B8C7D4"/></pattern>',
         '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#F06449"/></marker>',
@@ -330,7 +330,7 @@ def _canvas_to_svg(canvas: Canvas) -> str:
 
 
 server = MCPServer(
-    name="nfinite-canvas",
+    name="infinite-canvas",
     version="0.1.0",
     instructions="Build and refine freeform boards made of positioned cards and connections.",
     debug=os.getenv("DEBUG", "0") == "1",

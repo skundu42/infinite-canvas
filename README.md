@@ -1,4 +1,4 @@
-# nfinite Canvas
+# Infinite Canvas
 
 A small, live spatial board for MCP. Models and browser users work on the same positioned cards and connections without translating the board into Mermaid source.
 

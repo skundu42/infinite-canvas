@@ -1,4 +1,4 @@
-"""Checks for nfinite Canvas."""
+"""Checks for Infinite Canvas."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ class CanvasApiTests(unittest.TestCase):
         response = self.client.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("nfinite Canvas", response.text)
+        self.assertIn("Infinite Canvas", response.text)
         self.assertIn("id=\"viewport\"", response.text)
 
     def test_rest_errors_are_structured(self) -> None:
