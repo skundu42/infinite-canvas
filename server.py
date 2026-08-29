@@ -58,6 +58,7 @@ OptionalColor = Annotated[
     str | None,
     Field(pattern=r"^#[0-9A-Fa-f]{6}$", description="Replacement six-digit hexadecimal card color"),
 ]
+Label = Annotated[str, Field(max_length=80, description="Optional connection label")]
 
 # ponytail: process-local state and one lock suit this template; use durable storage
 # and per-canvas locks when persistence or multi-worker throughput matters.
@@ -203,6 +204,42 @@ def _update_node(
         return {"canvas_id": canvas_id, "node": deepcopy(node), "revision": canvas["revision"]}
 
 
+def _connect_nodes(canvas_id: str, source_id: str, target_id: str, label: str = "") -> dict[str, Any]:
+    _validate_id(canvas_id, "canvas")
+    _validate_id(source_id, "source node")
+    _validate_id(target_id, "target node")
+    label = _validate_text(label, "Label", 80)
+    if source_id == target_id:
+        raise ValueError("A node cannot connect to itself")
+
+    with _store_lock:
+        canvas = _canvases.get(canvas_id)
+        if canvas is None:
+            raise KeyError(f"Canvas '{canvas_id}' was not found")
+        node_ids = {node["id"] for node in canvas["nodes"]}
+        missing = [node_id for node_id in (source_id, target_id) if node_id not in node_ids]
+        if missing:
+            raise KeyError(f"Node '{missing[0]}' was not found")
+        duplicate = next(
+            (
+                connection
+                for connection in canvas["connections"]
+                if connection["source"] == source_id
+                and connection["target"] == target_id
+                and connection["label"] == label
+            ),
+            None,
+        )
+        if duplicate is not None:
+            return {"canvas_id": canvas_id, "connection": deepcopy(duplicate), "revision": canvas["revision"]}
+        if len(canvas["connections"]) >= MAX_CONNECTIONS:
+            raise ValueError("Connection limit reached")
+        connection = {"id": _new_id(), "source": source_id, "target": target_id, "label": label}
+        canvas["connections"].append(connection)
+        canvas["revision"] += 1
+        return {"canvas_id": canvas_id, "connection": deepcopy(connection), "revision": canvas["revision"]}
+
+
 server = MCPServer(
     name="nfinite-canvas",
     version="0.1.0",
@@ -256,6 +293,21 @@ def update_node(
 ) -> dict[str, Any]:
     """Patch a card without replacing omitted fields."""
     return _update_node(canvas_id, node_id, title, body, kind, color, x, y)
+
+
+@server.tool(
+    description="Create a labeled, directed connection between two cards.",
+    annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=True, openWorldHint=False),
+    structured_output=True,
+)
+def connect_nodes(
+    canvas_id: CanvasId,
+    source_id: Annotated[str, Field(min_length=32, max_length=32, pattern=ID_PATTERN, description="Source card ID")],
+    target_id: Annotated[str, Field(min_length=32, max_length=32, pattern=ID_PATTERN, description="Target card ID")],
+    label: Label = "",
+) -> dict[str, Any]:
+    """Connect two cards, returning an existing exact duplicate unchanged."""
+    return _connect_nodes(canvas_id, source_id, target_id, label)
 
 
 if __name__ == "__main__":
