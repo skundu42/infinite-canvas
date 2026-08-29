@@ -27,6 +27,26 @@ CanvasId = Annotated[
         description="Canvas identifier returned by add_node or the browser editor",
     ),
 ]
+OptionalCanvasId = Annotated[
+    str | None,
+    Field(
+        min_length=32,
+        max_length=32,
+        pattern=ID_PATTERN,
+        description="Existing canvas identifier; omit to create a new canvas",
+    ),
+]
+Title = Annotated[str, Field(min_length=1, max_length=120, description="Short card title")]
+Body = Annotated[str, Field(max_length=4_000, description="Card details")]
+Kind = Annotated[str, Field(min_length=1, max_length=32, description="Freeform card category")]
+Color = Annotated[
+    str,
+    Field(pattern=r"^#[0-9A-Fa-f]{6}$", description="Six-digit hexadecimal card color"),
+]
+Coordinate = Annotated[
+    float | None,
+    Field(ge=-100_000, le=100_000, description="Canvas coordinate; omit for automatic placement"),
+]
 
 # ponytail: process-local state and one lock suit this template; use durable storage
 # and per-canvas locks when persistence or multi-worker throughput matters.
@@ -61,6 +81,66 @@ def _validate_id(value: str, kind: str) -> None:
         raise ValueError(f"Invalid {kind} ID")
 
 
+def _validate_text(value: str, field: str, maximum: int, *, required: bool = False) -> str:
+    cleaned = value.strip() if required else value
+    if required and not cleaned:
+        raise ValueError(f"{field} cannot be empty")
+    if len(cleaned) > maximum:
+        raise ValueError(f"{field} must be at most {maximum} characters")
+    return cleaned
+
+
+def _validate_color(value: str) -> str:
+    if len(value) != 7 or value[0] != "#" or any(character not in "0123456789abcdefABCDEF" for character in value[1:]):
+        raise ValueError("Color must be a six-digit hexadecimal value")
+    return value.upper()
+
+
+def _validate_coordinate(value: float | None) -> float | None:
+    if value is not None and not -100_000 <= value <= 100_000:
+        raise ValueError("Coordinates must be between -100000 and 100000")
+    return value
+
+
+def _add_node(
+    title: str,
+    body: str = "",
+    kind: str = "note",
+    color: str = "#FFF1A8",
+    x: float | None = None,
+    y: float | None = None,
+    canvas_id: str | None = None,
+) -> dict[str, Any]:
+    title = _validate_text(title, "Title", 120, required=True)
+    body = _validate_text(body, "Body", 4_000)
+    kind = _validate_text(kind, "Kind", 32, required=True)
+    color = _validate_color(color)
+    x = _validate_coordinate(x)
+    y = _validate_coordinate(y)
+    canvas_id = canvas_id or _create_canvas()["id"]
+    _validate_id(canvas_id, "canvas")
+
+    with _store_lock:
+        canvas = _canvases.get(canvas_id)
+        if canvas is None:
+            raise KeyError(f"Canvas '{canvas_id}' was not found")
+        if len(canvas["nodes"]) >= MAX_NODES:
+            raise ValueError("Node limit reached")
+        position = len(canvas["nodes"])
+        node = {
+            "id": _new_id(),
+            "title": title,
+            "body": body,
+            "kind": kind,
+            "color": color,
+            "x": x if x is not None else 80 + (position % 4) * 280,
+            "y": y if y is not None else 80 + (position // 4) * 190,
+        }
+        canvas["nodes"].append(node)
+        canvas["revision"] += 1
+        return {"canvas_id": canvas_id, "node": deepcopy(node), "revision": canvas["revision"]}
+
+
 server = MCPServer(
     name="nfinite-canvas",
     version="0.1.0",
@@ -77,6 +157,24 @@ server = MCPServer(
 def get_canvas(canvas_id: CanvasId) -> Canvas:
     """Return the current canvas state."""
     return _get_canvas(canvas_id)
+
+
+@server.tool(
+    description="Add a positioned card to a canvas, creating the canvas when canvas_id is omitted.",
+    annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=False, openWorldHint=False),
+    structured_output=True,
+)
+def add_node(
+    title: Title,
+    body: Body = "",
+    kind: Kind = "note",
+    color: Color = "#FFF1A8",
+    x: Coordinate = None,
+    y: Coordinate = None,
+    canvas_id: OptionalCanvasId = None,
+) -> dict[str, Any]:
+    """Add a card and return its canvas and node identifiers."""
+    return _add_node(title, body, kind, color, x, y, canvas_id)
 
 
 if __name__ == "__main__":

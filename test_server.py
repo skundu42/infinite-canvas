@@ -31,7 +31,23 @@ class CanvasStateTests(unittest.TestCase):
 
     def test_get_canvas_is_advertised(self) -> None:
         tools = asyncio.run(app.server.list_tools())
-        self.assertEqual([tool.name for tool in tools], ["get_canvas"])
+        self.assertEqual([tool.name for tool in tools], ["get_canvas", "add_node"])
+
+    def test_add_node_creates_canvas_and_places_cards(self) -> None:
+        first = app.add_node("Research")
+        second = app.add_node("Evidence", canvas_id=first["canvas_id"])
+        canvas = app.get_canvas(first["canvas_id"])
+
+        self.assertEqual(first["node"]["x"], 80)
+        self.assertEqual(second["node"]["x"], 360)
+        self.assertEqual(canvas["revision"], 2)
+        self.assertEqual([node["title"] for node in canvas["nodes"]], ["Research", "Evidence"])
+
+    def test_add_node_validates_input(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Title cannot be empty"):
+            app.add_node("   ")
+        with self.assertRaisesRegex(ValueError, "hexadecimal"):
+            app.add_node("Card", color="red")
 
 
 if __name__ == "__main__":
