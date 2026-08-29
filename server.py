@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-import os
 import json
+import os
 from copy import deepcopy
+from functools import wraps
 from html import escape
 from threading import Lock
 from textwrap import wrap
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
 from mcp.types import ToolAnnotations
 from mcp_use.server import MCPServer
 from pydantic import Field
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 
 Canvas = dict[str, Any]
@@ -96,11 +99,15 @@ def _get_canvas(canvas_id: str) -> Canvas:
 
 
 def _validate_id(value: str, kind: str) -> None:
-    if len(value) != 32 or any(character not in "0123456789abcdef" for character in value):
+    if not isinstance(value, str) or len(value) != 32 or any(
+        character not in "0123456789abcdef" for character in value
+    ):
         raise ValueError(f"Invalid {kind} ID")
 
 
 def _validate_text(value: str, field: str, maximum: int, *, required: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be text")
     cleaned = value.strip() if required else value
     if required and not cleaned:
         raise ValueError(f"{field} cannot be empty")
@@ -110,12 +117,19 @@ def _validate_text(value: str, field: str, maximum: int, *, required: bool = Fal
 
 
 def _validate_color(value: str) -> str:
-    if len(value) != 7 or value[0] != "#" or any(character not in "0123456789abcdefABCDEF" for character in value[1:]):
+    if (
+        not isinstance(value, str)
+        or len(value) != 7
+        or value[0] != "#"
+        or any(character not in "0123456789abcdefABCDEF" for character in value[1:])
+    ):
         raise ValueError("Color must be a six-digit hexadecimal value")
     return value.upper()
 
 
 def _validate_coordinate(value: float | None) -> float | None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+        raise ValueError("Coordinates must be numbers")
     if value is not None and not -100_000 <= value <= 100_000:
         raise ValueError("Coordinates must be between -100000 and 100000")
     return value
@@ -391,6 +405,80 @@ def connect_nodes(
 def export_canvas(canvas_id: CanvasId, format: ExportFormat = "svg") -> dict[str, str]:
     """Return a portable representation of the canvas."""
     return _export_canvas(canvas_id, format)
+
+
+Handler = Callable[[Request], Awaitable[Response]]
+
+
+def _api_route(path: str, methods: list[str]) -> Callable[[Handler], Handler]:
+    def decorate(handler: Handler) -> Handler:
+        @wraps(handler)
+        async def safe_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except KeyError as error:
+                return JSONResponse({"error": error.args[0]}, status_code=404)
+            except ValueError as error:
+                return JSONResponse({"error": str(error)}, status_code=400)
+
+        server.custom_route(path, methods=methods)(safe_handler)
+        return safe_handler
+
+    return decorate
+
+
+async def _json_body(request: Request, allowed: set[str], required: set[str] = frozenset()) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception as error:
+        raise ValueError("Request body must be valid JSON") from error
+    if not isinstance(body, dict):
+        raise ValueError("Request body must be a JSON object")
+    unknown = set(body) - allowed
+    missing = required - set(body)
+    if unknown:
+        raise ValueError(f"Unknown fields: {', '.join(sorted(unknown))}")
+    if missing:
+        raise ValueError(f"Missing fields: {', '.join(sorted(missing))}")
+    return body
+
+
+@_api_route("/api/canvases", ["POST"])
+async def api_create_canvas(_: Request) -> Response:
+    return JSONResponse(_create_canvas(), status_code=201)
+
+
+@_api_route("/api/canvases/{canvas_id}", ["GET"])
+async def api_get_canvas(request: Request) -> Response:
+    return JSONResponse(_get_canvas(request.path_params["canvas_id"]))
+
+
+@_api_route("/api/canvases/{canvas_id}/nodes", ["POST"])
+async def api_add_node(request: Request) -> Response:
+    body = await _json_body(request, {"title", "body", "kind", "color", "x", "y"}, {"title"})
+    return JSONResponse(_add_node(canvas_id=request.path_params["canvas_id"], **body), status_code=201)
+
+
+@_api_route("/api/canvases/{canvas_id}/nodes/{node_id}", ["PATCH"])
+async def api_update_node(request: Request) -> Response:
+    body = await _json_body(request, {"title", "body", "kind", "color", "x", "y"})
+    return JSONResponse(_update_node(request.path_params["canvas_id"], request.path_params["node_id"], **body))
+
+
+@_api_route("/api/canvases/{canvas_id}/connections", ["POST"])
+async def api_connect_nodes(request: Request) -> Response:
+    body = await _json_body(request, {"source_id", "target_id", "label"}, {"source_id", "target_id"})
+    return JSONResponse(_connect_nodes(canvas_id=request.path_params["canvas_id"], **body), status_code=201)
+
+
+@_api_route("/api/canvases/{canvas_id}/export", ["GET"])
+async def api_export_canvas(request: Request) -> Response:
+    exported = _export_canvas(request.path_params["canvas_id"], request.query_params.get("format", "svg"))
+    return Response(
+        exported["content"],
+        media_type=exported["mime_type"],
+        headers={"Content-Disposition": f'attachment; filename="{exported["filename"]}"'},
+    )
 
 
 if __name__ == "__main__":

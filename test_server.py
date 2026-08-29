@@ -7,6 +7,7 @@ import json
 import unittest
 
 import server as app
+from starlette.testclient import TestClient
 
 
 class CanvasStateTests(unittest.TestCase):
@@ -112,6 +113,53 @@ class CanvasStateTests(unittest.TestCase):
         created = app.add_node("Card")
         with self.assertRaisesRegex(ValueError, "Format must be"):
             app.export_canvas(created["canvas_id"], "png")
+
+
+class CanvasApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with app._store_lock:
+            app._canvases.clear()
+        self.client = TestClient(app.server.streamable_http_app())
+
+    def test_rest_canvas_lifecycle(self) -> None:
+        created = self.client.post("/api/canvases")
+        self.assertEqual(created.status_code, 201)
+        canvas_id = created.json()["id"]
+
+        first = self.client.post(f"/api/canvases/{canvas_id}/nodes", json={"title": "Problem"}).json()["node"]
+        second = self.client.post(
+            f"/api/canvases/{canvas_id}/nodes", json={"title": "Answer", "x": 480, "y": 220}
+        ).json()["node"]
+        updated = self.client.patch(
+            f"/api/canvases/{canvas_id}/nodes/{first['id']}", json={"body": "Define the real constraint", "x": 140}
+        )
+        connected = self.client.post(
+            f"/api/canvases/{canvas_id}/connections",
+            json={"source_id": first["id"], "target_id": second["id"], "label": "resolves"},
+        )
+        canvas = self.client.get(f"/api/canvases/{canvas_id}").json()
+        exported = self.client.get(f"/api/canvases/{canvas_id}/export?format=svg")
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(connected.status_code, 201)
+        self.assertEqual(canvas["revision"], 4)
+        self.assertEqual(len(canvas["nodes"]), 2)
+        self.assertEqual(len(canvas["connections"]), 1)
+        self.assertEqual(exported.status_code, 200)
+        self.assertEqual(exported.headers["content-type"], "image/svg+xml")
+
+    def test_rest_errors_are_structured(self) -> None:
+        missing = self.client.get(f"/api/canvases/{'0' * 32}")
+        created = self.client.post("/api/canvases").json()
+        invalid = self.client.post(
+            f"/api/canvases/{created['id']}/nodes",
+            json={"title": "Card", "color": "red", "surprise": True},
+        )
+
+        self.assertEqual(missing.status_code, 404)
+        self.assertIn("was not found", missing.json()["error"])
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn("Unknown fields", invalid.json()["error"])
 
 
 if __name__ == "__main__":
