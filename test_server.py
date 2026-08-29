@@ -148,6 +148,13 @@ class CanvasApiTests(unittest.TestCase):
         self.assertEqual(exported.status_code, 200)
         self.assertEqual(exported.headers["content-type"], "image/svg+xml")
 
+    def test_browser_canvas_is_served(self) -> None:
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("nfinite Canvas", response.text)
+        self.assertIn("id=\"viewport\"", response.text)
+
     def test_rest_errors_are_structured(self) -> None:
         missing = self.client.get(f"/api/canvases/{'0' * 32}")
         created = self.client.post("/api/canvases").json()

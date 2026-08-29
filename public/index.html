@@ -1,0 +1,1075 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#dce8f1">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%2314222e'/><circle cx='16' cy='16' r='5' fill='%23f06449'/></svg>">
+  <title>nfinite Canvas</title>
+  <style>
+    :root {
+      --canvas: #eaf1f7;
+      --grid: #b8c7d4;
+      --paper: #ffffff;
+      --ink: #14222e;
+      --muted: #627583;
+      --line: #c8d4de;
+      --signal: #f06449;
+      --signal-soft: #ffe2db;
+      --focus: #246bfd;
+      --shadow: 0 14px 38px rgb(34 56 72 / 12%);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+
+    button, input, textarea { font: inherit; }
+
+    button {
+      color: inherit;
+      cursor: pointer;
+    }
+
+    button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--focus) 70%, white);
+      outline-offset: 2px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 68px minmax(0, 1fr);
+      height: 100%;
+    }
+
+    .toolbar {
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(255 255 255 / 92%);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 220px;
+      margin-right: auto;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--ink);
+      background:
+        linear-gradient(90deg, transparent 48%, var(--ink) 49% 51%, transparent 52%),
+        linear-gradient(transparent 48%, var(--ink) 49% 51%, transparent 52%);
+    }
+
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      inset: 13px;
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0 4px var(--signal-soft);
+    }
+
+    .brand-name {
+      margin: 0;
+      font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+    }
+
+    .board-meta {
+      display: flex;
+      gap: 7px;
+      margin-top: 3px;
+      color: var(--muted);
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .toolbar-group { display: flex; min-width: 0; gap: 7px; }
+
+    .button {
+      min-height: 40px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--paper);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .button:hover { border-color: #91a5b4; background: #f8fbfd; }
+
+    .button.primary {
+      border-color: var(--ink);
+      background: var(--ink);
+      color: white;
+    }
+
+    .button.signal, .button[aria-pressed="true"] {
+      border-color: var(--signal);
+      background: var(--signal-soft);
+      color: #92351f;
+    }
+
+    .button.compact { min-width: 40px; padding: 0 10px; }
+
+    .main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 314px;
+      min-height: 0;
+    }
+
+    .viewport {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      touch-action: none;
+      background-color: var(--canvas);
+      background-image: radial-gradient(circle, var(--grid) 1.15px, transparent 1.2px);
+      cursor: grab;
+    }
+
+    .viewport.is-panning { cursor: grabbing; }
+    .viewport.is-connecting { cursor: crosshair; }
+
+    .world {
+      position: absolute;
+      inset: 0;
+      width: 1px;
+      height: 1px;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    .edges {
+      position: absolute;
+      inset: 0;
+      width: 1px;
+      height: 1px;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .edge-line {
+      fill: none;
+      stroke: var(--signal);
+      stroke-width: 2.5;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .edge-label {
+      fill: #455565;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      paint-order: stroke;
+      stroke: var(--canvas);
+      stroke-width: 7px;
+      stroke-linejoin: round;
+    }
+
+    .node-layer { position: absolute; inset: 0; }
+
+    .card {
+      --card-ink: var(--ink);
+      position: absolute;
+      width: 240px;
+      height: 132px;
+      padding: 17px 18px;
+      overflow: visible;
+      border: 1px solid rgb(20 34 46 / 42%);
+      border-radius: 12px 12px 12px 3px;
+      color: var(--card-ink);
+      box-shadow: 0 8px 18px rgb(39 60 76 / 11%);
+      cursor: move;
+      user-select: none;
+      transition: box-shadow 140ms ease, transform 140ms ease;
+    }
+
+    .card:hover { box-shadow: 0 12px 24px rgb(39 60 76 / 17%); }
+
+    .card.selected {
+      box-shadow: 0 0 0 3px var(--paper), 0 0 0 6px var(--ink), var(--shadow);
+    }
+
+    .card.connection-source {
+      box-shadow: 0 0 0 3px var(--paper), 0 0 0 6px var(--signal), var(--shadow);
+    }
+
+    .card-kind {
+      display: block;
+      overflow: hidden;
+      margin-bottom: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .11em;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+      opacity: .7;
+    }
+
+    .card-title {
+      display: block;
+      overflow: hidden;
+      font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .card-body {
+      display: -webkit-box;
+      overflow: hidden;
+      margin-top: 7px;
+      font-size: 12px;
+      line-height: 1.38;
+      opacity: .78;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+    }
+
+    .port {
+      position: absolute;
+      top: calc(50% - 8px);
+      width: 16px;
+      height: 16px;
+      border: 4px solid var(--paper);
+      border-radius: 50%;
+      background: var(--signal);
+      box-shadow: 0 0 0 1px var(--signal);
+    }
+
+    .port.in { left: -9px; }
+    .port.out { right: -9px; }
+
+    .is-connecting .port { animation: signal 1.2s ease-in-out infinite; }
+
+    @keyframes signal {
+      50% { box-shadow: 0 0 0 7px rgb(240 100 73 / 18%); }
+    }
+
+    .empty-state {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: min(360px, calc(100% - 40px));
+      padding: 26px;
+      border: 1px solid var(--line);
+      background: rgb(255 255 255 / 88%);
+      box-shadow: var(--shadow);
+      text-align: center;
+      transform: translate(-50%, -50%);
+      backdrop-filter: blur(8px);
+    }
+
+    .empty-state[hidden] { display: none; }
+    .empty-state h2 { margin: 0 0 8px; font: 800 22px/1.1 ui-rounded, system-ui, sans-serif; }
+    .empty-state p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+    .coordinates {
+      position: absolute;
+      bottom: 14px;
+      left: 14px;
+      z-index: 4;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      background: rgb(255 255 255 / 86%);
+      color: var(--muted);
+      font: 10px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .04em;
+      pointer-events: none;
+    }
+
+    .inspector {
+      z-index: 10;
+      overflow: auto;
+      border-left: 1px solid var(--line);
+      background: #f8fbfd;
+    }
+
+    .inspector-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 20px 20px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(248 251 253 / 94%);
+      backdrop-filter: blur(10px);
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--signal);
+      font: 800 10px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .inspector h2 { margin: 0; font: 800 19px/1.15 ui-rounded, system-ui, sans-serif; }
+    .inspector-content { padding: 18px 20px 28px; }
+
+    .inspector-empty {
+      padding: 14px 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .field { display: grid; gap: 6px; margin-bottom: 15px; }
+
+    .field label {
+      color: #455565;
+      font: 700 11px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .field input, .field textarea {
+      width: 100%;
+      border: 1px solid #b8c7d4;
+      border-radius: 7px;
+      background: var(--paper);
+      color: var(--ink);
+    }
+
+    .field input { height: 40px; padding: 0 10px; }
+    .field input[type="color"] { padding: 5px; }
+    .field textarea { min-height: 92px; padding: 9px 10px; resize: vertical; line-height: 1.45; }
+    .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+    .form-actions { display: flex; gap: 8px; margin-top: 20px; }
+    .form-actions .button { flex: 1; }
+
+    .connect-panel {
+      padding: 14px;
+      border: 1px solid #f3b5a8;
+      background: #fff6f3;
+    }
+
+    .connect-panel p { margin: 0 0 12px; color: #714236; font-size: 12px; line-height: 1.5; }
+
+    .toast {
+      position: fixed;
+      z-index: 50;
+      bottom: 18px;
+      left: 50%;
+      max-width: min(440px, calc(100% - 32px));
+      padding: 11px 15px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: white;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 12px);
+      transition: opacity 150ms ease, transform 150ms ease;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .toast.error { border-color: #9f2f20; background: #9f2f20; }
+
+    @media (max-width: 820px) {
+      body { overflow-x: hidden; overflow-y: auto; }
+      .app { height: auto; min-height: 100%; grid-template-rows: auto auto; }
+      .toolbar { position: sticky; top: 0; width: 100%; min-width: 0; overflow: hidden; flex-wrap: wrap; }
+      .brand { flex: 0 0 100%; width: 100%; min-width: 0; }
+      .toolbar-group { flex: 0 0 100%; width: 100%; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
+      .button { white-space: nowrap; }
+      .main { width: 100%; grid-template-columns: minmax(0, 1fr); grid-template-rows: 62vh auto; }
+      .inspector { min-width: 0; width: 100%; border-top: 1px solid var(--line); border-left: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="toolbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand-name">nfinite Canvas</h1>
+          <div class="board-meta"><span id="canvas-label">Starting…</span><span id="revision-label">rev —</span></div>
+        </div>
+      </div>
+      <div class="toolbar-group" aria-label="Canvas actions">
+        <button class="button primary" id="add-button" type="button">+ Add card</button>
+        <button class="button" id="connect-button" type="button" aria-pressed="false">Connect</button>
+        <button class="button" id="fit-button" type="button">Fit view</button>
+        <button class="button" id="share-button" type="button">Share</button>
+        <button class="button compact" id="json-button" type="button" title="Export editable JSON">JSON</button>
+        <button class="button compact" id="svg-button" type="button" title="Export standalone SVG">SVG</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="viewport" id="viewport" tabindex="0" role="application" aria-label="Freeform card canvas">
+        <div class="world" id="world">
+          <svg class="edges" aria-hidden="true">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#f06449"></path>
+              </marker>
+            </defs>
+            <g id="edge-layer"></g>
+          </svg>
+          <div class="node-layer" id="node-layer"></div>
+        </div>
+        <div class="empty-state" id="empty-state" hidden>
+          <h2>Place the first card</h2>
+          <p>Start with a thought, decision, task, or question. The model can add to the same board through MCP.</p>
+          <button class="button primary" id="empty-add-button" type="button">Add first card</button>
+        </div>
+        <div class="coordinates" id="coordinates">x 0 · y 0 · 100%</div>
+      </section>
+
+      <aside class="inspector" aria-label="Card inspector">
+        <div class="inspector-header">
+          <p class="eyebrow" id="inspector-eyebrow">Inspector</p>
+          <h2 id="inspector-title">No card selected</h2>
+        </div>
+        <div class="inspector-content">
+          <div class="inspector-empty" id="inspector-empty">Select a card to edit it, or add a new card. Drag the open canvas to pan and use the mouse wheel to zoom.</div>
+
+          <form id="card-form" hidden>
+            <div class="field">
+              <label for="title-input">Title</label>
+              <input id="title-input" name="title" maxlength="120" required autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="body-input">Details</label>
+              <textarea id="body-input" name="body" maxlength="4000"></textarea>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="kind-input">Kind</label>
+                <input id="kind-input" name="kind" maxlength="32" required value="note" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="color-input">Color</label>
+                <input id="color-input" name="color" type="color" value="#fff1a8">
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="x-input">X</label>
+                <input id="x-input" name="x" type="number" min="-100000" max="100000" step="1">
+              </div>
+              <div class="field">
+                <label for="y-input">Y</label>
+                <input id="y-input" name="y" type="number" min="-100000" max="100000" step="1">
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="button primary" id="save-button" type="submit">Save changes</button>
+              <button class="button" id="cancel-button" type="button">Cancel</button>
+            </div>
+          </form>
+
+          <div class="connect-panel" id="connect-panel" hidden>
+            <p id="connect-help">Select the source card, then the destination card.</p>
+            <div class="field">
+              <label for="connection-label">Connection label</label>
+              <input id="connection-label" maxlength="80" placeholder="Optional" autocomplete="off">
+            </div>
+            <button class="button" id="cancel-connect-button" type="button">Cancel connection</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const CARD_WIDTH = 240;
+    const CARD_HEIGHT = 132;
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const byId = id => document.getElementById(id);
+    const elements = {
+      viewport: byId("viewport"),
+      world: byId("world"),
+      nodeLayer: byId("node-layer"),
+      edgeLayer: byId("edge-layer"),
+      emptyState: byId("empty-state"),
+      coordinates: byId("coordinates"),
+      canvasLabel: byId("canvas-label"),
+      revisionLabel: byId("revision-label"),
+      addButton: byId("add-button"),
+      emptyAddButton: byId("empty-add-button"),
+      connectButton: byId("connect-button"),
+      fitButton: byId("fit-button"),
+      shareButton: byId("share-button"),
+      jsonButton: byId("json-button"),
+      svgButton: byId("svg-button"),
+      inspectorEyebrow: byId("inspector-eyebrow"),
+      inspectorTitle: byId("inspector-title"),
+      inspectorEmpty: byId("inspector-empty"),
+      cardForm: byId("card-form"),
+      titleInput: byId("title-input"),
+      bodyInput: byId("body-input"),
+      kindInput: byId("kind-input"),
+      colorInput: byId("color-input"),
+      xInput: byId("x-input"),
+      yInput: byId("y-input"),
+      saveButton: byId("save-button"),
+      cancelButton: byId("cancel-button"),
+      connectPanel: byId("connect-panel"),
+      connectHelp: byId("connect-help"),
+      connectionLabel: byId("connection-label"),
+      cancelConnectButton: byId("cancel-connect-button"),
+      toast: byId("toast")
+    };
+
+    const state = {
+      canvas: null,
+      selectedId: null,
+      editorMode: "empty",
+      editorDirty: false,
+      interacting: false,
+      connectMode: false,
+      connectSource: null,
+      transform: { x: 70, y: 70, scale: 1 },
+      drag: null,
+      pan: null,
+      suppressClick: false,
+      toastTimer: null
+    };
+
+    async function request(path, options = {}) {
+      const config = { ...options, headers: { ...(options.headers || {}) } };
+      if (config.body && typeof config.body !== "string") {
+        config.headers["Content-Type"] = "application/json";
+        config.body = JSON.stringify(config.body);
+      }
+      const response = await fetch(path, config);
+      const data = response.headers.get("content-type")?.includes("json") ? await response.json() : null;
+      if (!response.ok) throw new Error(data?.error || `Request failed (${response.status})`);
+      return data;
+    }
+
+    function showToast(message, isError = false) {
+      clearTimeout(state.toastTimer);
+      elements.toast.textContent = message;
+      elements.toast.classList.toggle("error", isError);
+      elements.toast.classList.add("show");
+      state.toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 2600);
+    }
+
+    async function createCanvas() {
+      try {
+        const canvas = await request("/api/canvases", { method: "POST" });
+        history.replaceState(null, "", `?canvas=${canvas.id}`);
+        state.canvas = canvas;
+        state.selectedId = null;
+        renderAll();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+
+    async function loadCanvas({ silent = false } = {}) {
+      const canvasId = new URLSearchParams(location.search).get("canvas");
+      if (!canvasId) return createCanvas();
+      try {
+        const canvas = await request(`/api/canvases/${canvasId}`);
+        const changed = !state.canvas || canvas.revision !== state.canvas.revision;
+        state.canvas = canvas;
+        if (state.selectedId && !canvas.nodes.some(node => node.id === state.selectedId)) state.selectedId = null;
+        if (changed || !silent) renderAll();
+      } catch (error) {
+        if (!silent) {
+          state.canvas = null;
+          renderAll();
+          showToast(`${error.message}. Open this URL in the process that created it, or start a new board.`, true);
+        }
+      }
+    }
+
+    function updateTransform() {
+      const { x, y, scale } = state.transform;
+      elements.world.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+      const grid = 24 * scale;
+      elements.viewport.style.backgroundSize = `${grid}px ${grid}px`;
+      elements.viewport.style.backgroundPosition = `${x % grid}px ${y % grid}px`;
+      updateCoordinates();
+    }
+
+    function screenToWorld(clientX, clientY) {
+      const bounds = elements.viewport.getBoundingClientRect();
+      return {
+        x: (clientX - bounds.left - state.transform.x) / state.transform.scale,
+        y: (clientY - bounds.top - state.transform.y) / state.transform.scale
+      };
+    }
+
+    function updateCoordinates(point = { x: 0, y: 0 }) {
+      elements.coordinates.textContent = `x ${Math.round(point.x)} · y ${Math.round(point.y)} · ${Math.round(state.transform.scale * 100)}%`;
+    }
+
+    function contrastColor(hex) {
+      const [r, g, b] = [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16));
+      return (r * 299 + g * 587 + b * 114) / 1000 > 145 ? "#14222e" : "#ffffff";
+    }
+
+    function selectedNode() {
+      return state.canvas?.nodes.find(node => node.id === state.selectedId) || null;
+    }
+
+    function renderAll() {
+      renderMeta();
+      renderEdges();
+      renderNodes();
+      renderInspector();
+      updateTransform();
+      elements.emptyState.hidden = Boolean(state.canvas?.nodes.length);
+    }
+
+    function renderMeta() {
+      elements.canvasLabel.textContent = state.canvas ? `board ${state.canvas.id.slice(0, 8)}` : "board unavailable";
+      elements.revisionLabel.textContent = state.canvas ? `rev ${state.canvas.revision}` : "rev —";
+    }
+
+    function renderEdges() {
+      elements.edgeLayer.replaceChildren();
+      if (!state.canvas) return;
+      const nodes = new Map(state.canvas.nodes.map(node => [node.id, node]));
+      for (const connection of state.canvas.connections) {
+        const source = nodes.get(connection.source);
+        const target = nodes.get(connection.target);
+        if (!source || !target) continue;
+        const x1 = source.x + CARD_WIDTH / 2;
+        const y1 = source.y + CARD_HEIGHT / 2;
+        const x2 = target.x + CARD_WIDTH / 2;
+        const y2 = target.y + CARD_HEIGHT / 2;
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("class", "edge-line");
+        path.setAttribute("d", `M ${x1} ${y1} L ${x2} ${y2}`);
+        path.setAttribute("marker-end", "url(#arrow)");
+        elements.edgeLayer.append(path);
+        if (connection.label) {
+          const label = document.createElementNS(SVG_NS, "text");
+          label.setAttribute("class", "edge-label");
+          label.setAttribute("x", (x1 + x2) / 2);
+          label.setAttribute("y", (y1 + y2) / 2 - 8);
+          label.setAttribute("text-anchor", "middle");
+          label.textContent = connection.label;
+          elements.edgeLayer.append(label);
+        }
+      }
+    }
+
+    function renderNodes() {
+      elements.nodeLayer.replaceChildren();
+      if (!state.canvas) return;
+      for (const node of state.canvas.nodes) {
+        const card = document.createElement("article");
+        card.className = "card";
+        if (node.id === state.selectedId) card.classList.add("selected");
+        if (node.id === state.connectSource) card.classList.add("connection-source");
+        card.dataset.id = node.id;
+        card.tabIndex = 0;
+        card.setAttribute("role", "button");
+        card.setAttribute("aria-label", `${node.kind}: ${node.title}`);
+        card.style.left = `${node.x}px`;
+        card.style.top = `${node.y}px`;
+        card.style.background = node.color;
+        card.style.setProperty("--card-ink", contrastColor(node.color));
+
+        const inputPort = document.createElement("span");
+        inputPort.className = "port in";
+        inputPort.setAttribute("aria-hidden", "true");
+        const outputPort = document.createElement("span");
+        outputPort.className = "port out";
+        outputPort.setAttribute("aria-hidden", "true");
+        const kind = document.createElement("span");
+        kind.className = "card-kind";
+        kind.textContent = node.kind;
+        const title = document.createElement("strong");
+        title.className = "card-title";
+        title.textContent = node.title;
+        const body = document.createElement("span");
+        body.className = "card-body";
+        body.textContent = node.body || "No details yet";
+        card.append(inputPort, outputPort, kind, title, body);
+
+        card.addEventListener("pointerdown", event => beginDrag(event, node, card));
+        card.addEventListener("pointermove", event => moveDrag(event, node, card));
+        card.addEventListener("pointerup", event => endDrag(event, node, card));
+        card.addEventListener("pointercancel", event => endDrag(event, node, card));
+        card.addEventListener("click", () => handleCardClick(node.id));
+        card.addEventListener("keydown", event => handleCardKey(event, node));
+        elements.nodeLayer.append(card);
+      }
+    }
+
+    function selectNode(nodeId, redraw = true) {
+      state.selectedId = nodeId;
+      state.editorMode = "edit";
+      state.editorDirty = false;
+      if (redraw) {
+        renderNodes();
+      } else {
+        for (const card of elements.nodeLayer.querySelectorAll(".card")) {
+          card.classList.toggle("selected", card.dataset.id === nodeId);
+        }
+      }
+      renderInspector();
+    }
+
+    function handleCardClick(nodeId) {
+      if (state.suppressClick) {
+        state.suppressClick = false;
+        return;
+      }
+      if (!state.connectMode) return selectNode(nodeId);
+      if (!state.connectSource) {
+        state.connectSource = nodeId;
+        renderNodes();
+        renderInspector();
+        elements.connectHelp.textContent = "Now select the destination card.";
+        showToast("Source selected. Choose a destination.");
+        return;
+      }
+      if (state.connectSource === nodeId) return showToast("Choose a different destination card.", true);
+      createConnection(state.connectSource, nodeId);
+    }
+
+    function handleCardKey(event, node) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleCardClick(node.id);
+        return;
+      }
+      const movement = { ArrowLeft: [-10, 0], ArrowRight: [10, 0], ArrowUp: [0, -10], ArrowDown: [0, 10] }[event.key];
+      if (!movement || state.connectMode) return;
+      event.preventDefault();
+      node.x += movement[0];
+      node.y += movement[1];
+      persistPosition(node);
+    }
+
+    function beginDrag(event, node, card) {
+      if (state.connectMode || event.button !== 0) return;
+      event.stopPropagation();
+      selectNode(node.id, false);
+      state.interacting = true;
+      state.drag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        nodeX: node.x,
+        nodeY: node.y,
+        moved: false
+      };
+      card.setPointerCapture(event.pointerId);
+    }
+
+    function moveDrag(event, node, card) {
+      if (!state.drag || state.drag.pointerId !== event.pointerId) return;
+      const dx = (event.clientX - state.drag.startX) / state.transform.scale;
+      const dy = (event.clientY - state.drag.startY) / state.transform.scale;
+      state.drag.moved ||= Math.abs(dx) + Math.abs(dy) > 3;
+      node.x = Math.round(state.drag.nodeX + dx);
+      node.y = Math.round(state.drag.nodeY + dy);
+      card.style.left = `${node.x}px`;
+      card.style.top = `${node.y}px`;
+      renderEdges();
+      if (!state.editorDirty) {
+        elements.xInput.value = node.x;
+        elements.yInput.value = node.y;
+      }
+    }
+
+    async function endDrag(event, node, card) {
+      if (!state.drag || state.drag.pointerId !== event.pointerId) return;
+      const moved = state.drag.moved;
+      state.drag = null;
+      state.interacting = false;
+      if (card.hasPointerCapture(event.pointerId)) card.releasePointerCapture(event.pointerId);
+      if (moved) {
+        state.suppressClick = true;
+        await persistPosition(node);
+      }
+    }
+
+    async function persistPosition(node) {
+      try {
+        await request(`/api/canvases/${state.canvas.id}/nodes/${node.id}`, {
+          method: "PATCH",
+          body: { x: node.x, y: node.y }
+        });
+        await loadCanvas();
+      } catch (error) {
+        showToast(error.message, true);
+        await loadCanvas();
+      }
+    }
+
+    function renderInspector() {
+      const node = selectedNode();
+      const editing = state.editorMode === "new" || (state.editorMode === "edit" && node);
+      elements.inspectorEmpty.hidden = editing || state.connectMode;
+      elements.cardForm.hidden = !editing || state.connectMode;
+      elements.connectPanel.hidden = !state.connectMode;
+
+      if (state.connectMode) {
+        elements.inspectorEyebrow.textContent = "Connection mode";
+        elements.inspectorTitle.textContent = state.connectSource ? "Choose destination" : "Choose source";
+        return;
+      }
+      if (!editing) {
+        elements.inspectorEyebrow.textContent = "Inspector";
+        elements.inspectorTitle.textContent = "No card selected";
+        return;
+      }
+      elements.inspectorEyebrow.textContent = state.editorMode === "new" ? "New card" : `Card ${node.id.slice(0, 8)}`;
+      elements.inspectorTitle.textContent = state.editorMode === "new" ? "Place a thought" : "Edit card";
+      elements.saveButton.textContent = state.editorMode === "new" ? "Add card" : "Save changes";
+      if (state.editorDirty) return;
+
+      const center = screenToWorld(
+        elements.viewport.getBoundingClientRect().left + elements.viewport.clientWidth / 2,
+        elements.viewport.getBoundingClientRect().top + elements.viewport.clientHeight / 2
+      );
+      const values = node || {
+        title: "",
+        body: "",
+        kind: "note",
+        color: "#fff1a8",
+        ...nextCardPosition(center)
+      };
+      elements.titleInput.value = values.title;
+      elements.bodyInput.value = values.body;
+      elements.kindInput.value = values.kind;
+      elements.colorInput.value = values.color.toLowerCase();
+      elements.xInput.value = values.x;
+      elements.yInput.value = values.y;
+    }
+
+    function nextCardPosition(center) {
+      let x = Math.round(center.x - CARD_WIDTH / 2);
+      let y = Math.round(center.y - CARD_HEIGHT / 2);
+      // ponytail: cascade collisions; use spatial indexing only if 500-card boards make this measurable.
+      while (state.canvas?.nodes.some(node => Math.abs(node.x - x) < CARD_WIDTH && Math.abs(node.y - y) < CARD_HEIGHT)) {
+        x += 36;
+        y += 36;
+      }
+      return { x, y };
+    }
+
+    async function openNewCard() {
+      if (!state.canvas) {
+        await createCanvas();
+        if (!state.canvas) return;
+      }
+      state.selectedId = null;
+      state.editorMode = "new";
+      state.editorDirty = false;
+      renderNodes();
+      renderInspector();
+      elements.titleInput.focus();
+    }
+
+    async function saveCard(event) {
+      event.preventDefault();
+      const payload = {
+        title: elements.titleInput.value,
+        body: elements.bodyInput.value,
+        kind: elements.kindInput.value,
+        color: elements.colorInput.value,
+        x: Number(elements.xInput.value),
+        y: Number(elements.yInput.value)
+      };
+      try {
+        const isNew = state.editorMode === "new";
+        let result;
+        if (isNew) {
+          result = await request(`/api/canvases/${state.canvas.id}/nodes`, { method: "POST", body: payload });
+        } else {
+          result = await request(`/api/canvases/${state.canvas.id}/nodes/${state.selectedId}`, {
+            method: "PATCH",
+            body: payload
+          });
+        }
+        state.selectedId = result.node.id;
+        state.editorMode = "edit";
+        state.editorDirty = false;
+        await loadCanvas();
+        showToast(isNew ? "Card added." : "Changes saved.");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+
+    function cancelEditor() {
+      state.editorDirty = false;
+      state.editorMode = state.selectedId ? "edit" : "empty";
+      renderInspector();
+    }
+
+    function toggleConnect(force) {
+      state.connectMode = force ?? !state.connectMode;
+      state.connectSource = null;
+      elements.connectButton.setAttribute("aria-pressed", String(state.connectMode));
+      elements.viewport.classList.toggle("is-connecting", state.connectMode);
+      elements.connectHelp.textContent = "Select the source card, then the destination card.";
+      renderNodes();
+      renderInspector();
+    }
+
+    async function createConnection(sourceId, targetId) {
+      try {
+        await request(`/api/canvases/${state.canvas.id}/connections`, {
+          method: "POST",
+          body: { source_id: sourceId, target_id: targetId, label: elements.connectionLabel.value }
+        });
+        elements.connectionLabel.value = "";
+        toggleConnect(false);
+        await loadCanvas();
+        showToast("Cards connected.");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }
+
+    function fitView() {
+      if (!state.canvas?.nodes.length) {
+        state.transform = { x: 70, y: 70, scale: 1 };
+        return updateTransform();
+      }
+      const bounds = elements.viewport.getBoundingClientRect();
+      const minX = Math.min(...state.canvas.nodes.map(node => node.x));
+      const minY = Math.min(...state.canvas.nodes.map(node => node.y));
+      const maxX = Math.max(...state.canvas.nodes.map(node => node.x + CARD_WIDTH));
+      const maxY = Math.max(...state.canvas.nodes.map(node => node.y + CARD_HEIGHT));
+      const scale = Math.min(1.25, Math.max(.25, Math.min((bounds.width - 100) / (maxX - minX), (bounds.height - 100) / (maxY - minY))));
+      state.transform = {
+        scale,
+        x: (bounds.width - (maxX - minX) * scale) / 2 - minX * scale,
+        y: (bounds.height - (maxY - minY) * scale) / 2 - minY * scale
+      };
+      updateTransform();
+    }
+
+    function beginPan(event) {
+      if (event.button !== 0 || event.target.closest(".card")) return;
+      state.interacting = true;
+      state.pan = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: state.transform.x, y: state.transform.y };
+      elements.viewport.classList.add("is-panning");
+      elements.viewport.setPointerCapture(event.pointerId);
+    }
+
+    function movePan(event) {
+      updateCoordinates(screenToWorld(event.clientX, event.clientY));
+      if (!state.pan || state.pan.pointerId !== event.pointerId) return;
+      state.transform.x = state.pan.x + event.clientX - state.pan.startX;
+      state.transform.y = state.pan.y + event.clientY - state.pan.startY;
+      updateTransform();
+    }
+
+    function endPan(event) {
+      if (!state.pan || state.pan.pointerId !== event.pointerId) return;
+      state.pan = null;
+      state.interacting = false;
+      elements.viewport.classList.remove("is-panning");
+      if (elements.viewport.hasPointerCapture(event.pointerId)) elements.viewport.releasePointerCapture(event.pointerId);
+    }
+
+    function zoom(event) {
+      event.preventDefault();
+      const bounds = elements.viewport.getBoundingClientRect();
+      const px = event.clientX - bounds.left;
+      const py = event.clientY - bounds.top;
+      const previous = state.transform.scale;
+      const next = Math.min(2.5, Math.max(.25, previous * Math.exp(-event.deltaY * .001)));
+      state.transform.x = px - (px - state.transform.x) * next / previous;
+      state.transform.y = py - (py - state.transform.y) * next / previous;
+      state.transform.scale = next;
+      updateTransform();
+    }
+
+    async function shareCanvas() {
+      try {
+        if (navigator.clipboard) await navigator.clipboard.writeText(location.href);
+        else window.prompt("Copy this board URL", location.href);
+        showToast("Board link copied.");
+      } catch {
+        window.prompt("Copy this board URL", location.href);
+      }
+    }
+
+    function download(format) {
+      if (!state.canvas) return;
+      const link = document.createElement("a");
+      link.href = `/api/canvases/${state.canvas.id}/export?format=${format}`;
+      link.download = "";
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
+
+    elements.addButton.addEventListener("click", openNewCard);
+    elements.emptyAddButton.addEventListener("click", openNewCard);
+    elements.connectButton.addEventListener("click", () => toggleConnect());
+    elements.cancelConnectButton.addEventListener("click", () => toggleConnect(false));
+    elements.fitButton.addEventListener("click", fitView);
+    elements.shareButton.addEventListener("click", shareCanvas);
+    elements.jsonButton.addEventListener("click", () => download("json"));
+    elements.svgButton.addEventListener("click", () => download("svg"));
+    elements.cardForm.addEventListener("submit", saveCard);
+    elements.cancelButton.addEventListener("click", cancelEditor);
+    elements.cardForm.addEventListener("input", () => { state.editorDirty = true; });
+    elements.viewport.addEventListener("pointerdown", beginPan);
+    elements.viewport.addEventListener("pointermove", movePan);
+    elements.viewport.addEventListener("pointerup", endPan);
+    elements.viewport.addEventListener("pointercancel", endPan);
+    elements.viewport.addEventListener("wheel", zoom, { passive: false });
+    elements.viewport.addEventListener("keydown", event => {
+      if (event.key === "Escape") toggleConnect(false);
+      if (event.key === "+" || event.key === "=") {
+        state.transform.scale = Math.min(2.5, state.transform.scale * 1.1);
+        updateTransform();
+      }
+      if (event.key === "-") {
+        state.transform.scale = Math.max(.25, state.transform.scale / 1.1);
+        updateTransform();
+      }
+    });
+    window.addEventListener("resize", fitView);
+
+    loadCanvas().then(() => {
+      fitView();
+      setInterval(() => {
+        if (!state.interacting && !state.editorDirty && !document.hidden) loadCanvas({ silent: true });
+      }, 1000);
+    });
+  </script>
+</body>
+</html>

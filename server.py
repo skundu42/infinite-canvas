@@ -7,6 +7,7 @@ import os
 from copy import deepcopy
 from functools import wraps
 from html import escape
+from pathlib import Path
 from threading import Lock
 from textwrap import wrap
 from typing import Annotated, Any, Awaitable, Callable, Literal
@@ -14,9 +15,10 @@ from uuid import uuid4
 
 from mcp.types import ToolAnnotations
 from mcp_use.server import MCPServer
+from mcp_use.server.runner import ServerRunner
 from pydantic import Field
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 
 
 Canvas = dict[str, Any]
@@ -408,6 +410,7 @@ def export_canvas(canvas_id: CanvasId, format: ExportFormat = "svg") -> dict[str
 
 
 Handler = Callable[[Request], Awaitable[Response]]
+INDEX_PATH = Path(__file__).with_name("public") / "index.html"
 
 
 def _api_route(path: str, methods: list[str]) -> Callable[[Handler], Handler]:
@@ -441,6 +444,11 @@ async def _json_body(request: Request, allowed: set[str], required: set[str] = f
     if missing:
         raise ValueError(f"Missing fields: {', '.join(sorted(missing))}")
     return body
+
+
+@_api_route("/", ["GET"])
+async def browser_canvas(_: Request) -> Response:
+    return FileResponse(INDEX_PATH)
 
 
 @_api_route("/api/canvases", ["POST"])
@@ -482,7 +490,9 @@ async def api_export_canvas(request: Request) -> Response:
 
 
 if __name__ == "__main__":
-    server.run(
+    # ponytail: MCPServer.run() in 1.7.0 wraps the SDK's internal tool-cache lookup;
+    # use its ASGI runner directly until that middleware bug is fixed upstream.
+    ServerRunner(server).run(
         transport="streamable-http",
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
